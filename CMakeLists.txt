@@ -11,6 +11,7 @@ add_custom_command(
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/runtime/main.go
+        ${CMAKE_CURRENT_SOURCE_DIR}/runtime/main_test.go
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/modules/config/handler.go
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/modules/config/store.go
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/bus/client.go

@@ -11,6 +11,11 @@ server, kb bus. The exported repository includes the
 exact canonical Go bus client/runtime snapshot, caller contract, handler,
 validation, and persistent store. It contains no C implementation or bridge.
 
+Before a daemon bus exists, container bootstrap code may invoke
+`aimee-module-config --get PUBLIC_STRING_KEY`. This deliberately narrow mode is
+implemented by the same Go store, refuses secrets and non-string values, and
+prevents bootstrap scripts from becoming a second YAML parser.
+
 The daemon admits the process only when its installed absolute executable path,
 UID, principal class, principal reference, and event-kind grants match the
 installed `.grant` file. Copy that generated grant into each declared daemon

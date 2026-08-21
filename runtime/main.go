@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,14 +12,41 @@ import (
 	handler "github.com/RakuenSoftware/aimee-module-config/server-go/modules/config"
 )
 
+func printDefaultValue(key string, output io.Writer) error {
+	path, err := handler.DefaultPath()
+	if err != nil {
+		return err
+	}
+	store, err := handler.NewStore(path)
+	if err != nil {
+		return err
+	}
+	value, found, err := store.StringValue(key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("config key %q is absent or is not a public string", key)
+	}
+	_, err = fmt.Fprintln(output, value)
+	return err
+}
+
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--get" {
+		if err := printDefaultValue(os.Args[2], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "aimee-module-config: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	moduleHandler, err := handler.NewDefaultHandler()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aimee-module-config: %v\n", err)
 		os.Exit(1)
 	}
 	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s DAEMON_MODULE_BUS_SOCKET\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s DAEMON_MODULE_BUS_SOCKET | --get PUBLIC_STRING_KEY\n", os.Args[0])
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
