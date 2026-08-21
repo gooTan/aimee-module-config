@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/JBailes/aimee/server-go/bus"
-	configcontract "github.com/JBailes/aimee/server-go/config"
+	"github.com/RakuenSoftware/aimee-module-config/server-go/bus"
+	configcontract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
 )
 
 // NewHandler serves the complete config store contract. The Store owns all
@@ -77,6 +77,8 @@ func handleRequest(store *Store, request configcontract.Request) configcontract.
 	switch request.Operation {
 	case configcontract.OpValues:
 		response.Values, err = store.Values()
+	case configcontract.OpSnapshot:
+		response.Values, response.Version, err = store.Snapshot()
 	case configcontract.OpValue:
 		response.Value, err = store.Value(request.Key)
 	case configcontract.OpStringValue:
@@ -91,6 +93,43 @@ func handleRequest(store *Store, request configcontract.Request) configcontract.
 		response.Version, err = store.Version(request.Key)
 	case configcontract.OpTriggerRules:
 		response.Rules, err = store.TriggerRules()
+	case configcontract.OpWorkspaceAdd:
+		var change WorkspaceMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.WorkspaceAdd(change)
+		}
+	case configcontract.OpWorkspaceRemove:
+		var change WorkspaceMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.WorkspaceRemove(change.Path)
+		}
+	case configcontract.OpApplyRoundtablePreset:
+		var preset RoundtablePreset
+		if err = decodeRequestValue(request.Value, &preset); err == nil {
+			err = store.ApplyRoundtablePreset(preset)
+		}
+	case configcontract.OpPersistDefaults:
+		err = store.PersistDefaults()
+	case configcontract.OpSetTypedFacts:
+		var change TypedFactsMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.SetTypedFacts(change)
+		}
+	case configcontract.OpSetAPIHTTPListener:
+		var change APIHTTPListenerMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.SetAPIHTTPListener(change)
+		}
+	case configcontract.OpSetModelConcurrency:
+		var change ModelConcurrencyMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.SetModelConcurrency(change)
+		}
+	case configcontract.OpRemoveModelConcurrency:
+		var change ModelConcurrencyMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.RemoveModelConcurrency(change.Model)
+		}
 	default:
 		return configcontract.Response{Code: "invalid_operation", Error: "unknown config operation"}
 	}
@@ -102,9 +141,26 @@ func handleRequest(store *Store, request configcontract.Request) configcontract.
 			code = "not_found"
 		case strings.Contains(err.Error(), "version conflict"):
 			code = "conflict"
+		case strings.Contains(err.Error(), "already exists"):
+			code = "exists"
+		case strings.Contains(err.Error(), "registry full"):
+			code = "full"
 		}
 		return configcontract.Response{Code: code, Error: err.Error()}
 	}
 	response.OK = true
 	return response
+}
+
+func decodeRequestValue(value any, out any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return errors.New("invalid operation value")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return errors.New("invalid operation value")
+	}
+	return nil
 }

@@ -1,4 +1,4 @@
-module github.com/JBailes/aimee
+module github.com/RakuenSoftware/aimee-module-config
 
 go 1.25.0
 

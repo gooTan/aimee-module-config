@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/JBailes/aimee/server-go/bus"
-	handler "github.com/JBailes/aimee/server-go/modules/config"
+	"github.com/RakuenSoftware/aimee-module-config/server-go/bus"
+	handler "github.com/RakuenSoftware/aimee-module-config/server-go/modules/config"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 		SocketPath: os.Args[1], ModuleName: "config",
 		PrincipalClass: 1, PrincipalRef: 2,
 		Stages: []bus.ModuleStage{
-		{EventKind: 4609, StageID: 1},
+			{EventKind: 4609, StageID: 1},
 		},
 		Handler: moduleHandler,
 	}

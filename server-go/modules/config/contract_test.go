@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JBailes/aimee/server-go/bus"
-	configcontract "github.com/JBailes/aimee/server-go/config"
+	"github.com/RakuenSoftware/aimee-module-config/server-go/bus"
+	configcontract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
 )
 
 func TestHandlerConformsToOwnedEventContract(t *testing.T) {

@@ -1,6 +1,10 @@
-# Aimee module: config
+# Aimee Config Module
 
-This is the independent `config` source-ownership repository.
+This repository owns Aimee's complete configuration implementation: its
+pure-Go YAML store, defaults, validation, versioned and atomic mutations,
+language-neutral event contract, and event-bus process. Aimee callers retain
+only client-side accessors and contract bindings; no configuration parser or
+storage implementation is compiled from the Aimee repository.
 
 It builds `aimee-module-config` as a pure-Go process for the
 server, kb bus. The exported repository includes the

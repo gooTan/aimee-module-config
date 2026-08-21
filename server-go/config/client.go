@@ -44,12 +44,21 @@ type TriggerPipeline struct {
 type Operation string
 
 const (
-	OpValues       Operation = "values"
-	OpValue        Operation = "value"
-	OpStringValue  Operation = "string-value"
-	OpSetVersioned Operation = "set-versioned"
-	OpVersion      Operation = "version"
-	OpTriggerRules Operation = "trigger-rules"
+	OpValues                 Operation = "values"
+	OpSnapshot               Operation = "snapshot"
+	OpValue                  Operation = "value"
+	OpStringValue            Operation = "string-value"
+	OpSetVersioned           Operation = "set-versioned"
+	OpVersion                Operation = "version"
+	OpTriggerRules           Operation = "trigger-rules"
+	OpWorkspaceAdd           Operation = "workspace-add"
+	OpWorkspaceRemove        Operation = "workspace-remove"
+	OpApplyRoundtablePreset  Operation = "apply-roundtable-preset"
+	OpPersistDefaults        Operation = "persist-defaults"
+	OpSetTypedFacts          Operation = "set-typed-facts"
+	OpSetAPIHTTPListener     Operation = "set-api-http-listener"
+	OpSetModelConcurrency    Operation = "set-model-concurrency"
+	OpRemoveModelConcurrency Operation = "remove-model-concurrency"
 )
 
 type Request struct {
@@ -57,6 +66,22 @@ type Request struct {
 	Key             string    `json:"key,omitempty"`
 	Value           any       `json:"value,omitempty"`
 	PreviousVersion string    `json:"previous_version,omitempty"`
+}
+
+type TypedFactsMutation struct {
+	Enabled          *bool `json:"enabled,omitempty"`
+	AutoPromote      *bool `json:"auto_promote,omitempty"`
+	PromoteThreshold *int  `json:"promote_threshold,omitempty"`
+}
+
+type APIHTTPListenerMutation struct {
+	HTTPPort        int `json:"http_port"`
+	RateLimitPerMin int `json:"rate_limit_per_min"`
+}
+
+type ModelConcurrencyMutation struct {
+	Model string `json:"model"`
+	Limit int    `json:"limit,omitempty"`
 }
 
 type Response struct {
@@ -158,6 +183,20 @@ func (c *Client) Values() (map[string]any, error) {
 	return response.Values, nil
 }
 
+// Snapshot returns every effective public configuration value. It exists for
+// native services that need many narrow getters during one request; storage and
+// parsing remain owned by the Go module.
+func (c *Client) Snapshot() (map[string]any, error) {
+	response, err := c.request(Request{Operation: OpSnapshot})
+	if err != nil {
+		return nil, err
+	}
+	if response.Values == nil {
+		return nil, ErrMalformed
+	}
+	return response.Values, nil
+}
+
 func (c *Client) Value(key string) (any, error) {
 	response, err := c.request(Request{Operation: OpValue, Key: key})
 	return response.Value, err
@@ -185,6 +224,27 @@ func (c *Client) Set(key string, value any) error {
 func (c *Client) SetVersioned(key string, value any, previousVersion string) error {
 	_, err := c.request(Request{Operation: OpSetVersioned, Key: key, Value: value,
 		PreviousVersion: previousVersion})
+	return err
+}
+
+func (c *Client) SetTypedFacts(change TypedFactsMutation) error {
+	_, err := c.request(Request{Operation: OpSetTypedFacts, Value: change})
+	return err
+}
+
+func (c *Client) SetAPIHTTPListener(change APIHTTPListenerMutation) error {
+	_, err := c.request(Request{Operation: OpSetAPIHTTPListener, Value: change})
+	return err
+}
+
+func (c *Client) SetModelConcurrency(change ModelConcurrencyMutation) error {
+	_, err := c.request(Request{Operation: OpSetModelConcurrency, Value: change})
+	return err
+}
+
+func (c *Client) RemoveModelConcurrency(model string) error {
+	_, err := c.request(Request{Operation: OpRemoveModelConcurrency,
+		Value: ModelConcurrencyMutation{Model: model}})
 	return err
 }
 

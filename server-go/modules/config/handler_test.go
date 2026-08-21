@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JBailes/aimee/server-go/bus"
-	configcontract "github.com/JBailes/aimee/server-go/config"
+	"github.com/RakuenSoftware/aimee-module-config/server-go/bus"
+	configcontract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
 )
 
 func invoke(t *testing.T, handler bus.ModuleHandler, request configcontract.Request) configcontract.Response {

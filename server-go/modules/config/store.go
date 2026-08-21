@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,13 +14,89 @@ import (
 	"strings"
 	"sync"
 
-	configcontract "github.com/JBailes/aimee/server-go/config"
+	configcontract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
 	"go.yaml.in/yaml/v3"
 )
 
 type Store struct {
 	path string
 	mu   sync.Mutex
+}
+
+// defaultsJSON is generated once from the last native configuration release's
+// public accessor contract. It pins every shipped scalar/string default while
+// the implementation is replaced by this pure-Go module.
+//
+//go:embed defaults.json
+var defaultsJSON []byte
+
+var declaredDefaults = func() map[string]any {
+	var values map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(defaultsJSON)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil {
+		panic(fmt.Sprintf("decode embedded config defaults: %v", err))
+	}
+	return values
+}()
+
+// Credentials are runtime-secret capabilities, not configuration values. They
+// may still occur in an older YAML file during migration, but no read, snapshot,
+// default persistence, or mutation operation may expose or rewrite them.
+var secretKeys = map[string]struct{}{
+	"db2_url": {}, "search_tavily_api_key": {}, "proxy_token": {},
+	"ingress_trusted_proxy_secret": {}, "kb_api_bearer_token": {},
+	"telemetry_metrics_token": {}, "kb_client_bearer_token": {},
+	"server_api_bearer_token": {}, "trigger_auth_token": {},
+	"kb_curator_provider_api_key": {}, "embedder_api_key": {},
+	"synthesis_api_key": {},
+}
+
+// YAML keeps its operator-facing section names. Native and Go callers keep the
+// stable accessor names that predate the extraction. Only genuinely irregular
+// mappings belong here; ordinary dotted keys are normalized mechanically.
+var lookupAliases = map[string]string{
+	"kb_typed_facts_enabled":                   "typed_facts_enabled",
+	"kb_typed_facts_auto_promote":              "kb_typed_facts_auto_promote_enabled",
+	"kb_typed_facts_promote_threshold":         "kb_typed_facts_promote_threshold",
+	"intelligence_calibrate_enabled":           "calibration_enabled",
+	"intelligence_calibrate_command":           "calibration_command",
+	"intelligence_calibrate_buckets":           "calibration_buckets",
+	"intelligence_calibrate_prior_alpha0":      "calibration_prior_alpha0",
+	"intelligence_calibrate_prior_beta0":       "calibration_prior_beta0",
+	"intelligence_calibrate_credible_delta":    "calibration_credible_delta",
+	"intelligence_calibrate_conformal_window":  "calibration_conformal_window",
+	"intelligence_calibrate_conformal_epsilon": "calibration_conformal_epsilon",
+	"aimee_api_http_port":                      "server_api_http_port",
+	"aimee_api_tls_port":                       "server_api_tls_port",
+	"aimee_api_mtls":                           "server_api_mtls",
+	"aimee_api_rate_limit_per_min":             "server_api_rate_limit_per_min",
+}
+
+func publicKey(key string) bool {
+	_, secret := secretKeys[normalizeLookupKey(key)]
+	return !secret
+}
+
+func publicValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if publicKey(key) {
+				clean[key] = publicValue(child)
+			}
+		}
+		return clean
+	case []any:
+		clean := make([]any, len(typed))
+		for i := range typed {
+			clean[i] = publicValue(typed[i])
+		}
+		return clean
+	default:
+		return value
+	}
 }
 
 // MaxTriggerRules keeps the human-editable Go registry aligned with the
@@ -175,16 +252,96 @@ func (s *Store) Values() (map[string]any, error) {
 	return out, nil
 }
 
-func (s *Store) Value(key string) (any, error) {
-	values, err := s.Values()
+// EffectiveValues returns the complete caller-side snapshot. Keys use the
+// stable accessor spelling (dots and dashes normalized to underscores), so a
+// native getter and a Go caller observe the same value without sharing a
+// native struct layout. Operator-authored YAML wins over embedded defaults.
+func (s *Store) EffectiveValues() (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
 	if err != nil {
 		return nil, err
 	}
-	value, ok := values[key]
+	return s.effectiveValuesLocked(root), nil
+}
+
+// Snapshot binds the effective values and document version to one locked read,
+// so a reload client can never cache values from one write with the version of
+// another.
+func (s *Store) Snapshot() (map[string]any, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return nil, "", err
+	}
+	return s.effectiveValuesLocked(root), configNodeVersion(root), nil
+}
+
+func (s *Store) effectiveValuesLocked(root *yaml.Node) map[string]any {
+	out := make(map[string]any, len(declaredDefaults)+64)
+	for key, value := range declaredDefaults {
+		if publicKey(key) {
+			out[key] = value
+		}
+	}
+	raw := make(map[string]any)
+	flatten(root, "", raw)
+	for key, value := range raw {
+		normalized := normalizeLookupKey(key)
+		if alias, ok := lookupAliases[normalized]; ok {
+			normalized = alias
+		}
+		if publicKey(normalized) {
+			out[normalized] = value
+		}
+	}
+	if value, ok := out["db1_path"].(string); !ok || value == "" {
+		out["db1_path"] = filepath.Join(filepath.Dir(s.path), "aimee.db")
+	}
+	// Structured callers sometimes need the complete section as well as its
+	// individual flattened fields (for example sandbox policy and registries).
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		var value any
+		if root.Content[i+1].Decode(&value) == nil && publicKey(root.Content[i].Value) {
+			out[normalizeLookupKey(root.Content[i].Value)] = publicValue(value)
+		}
+	}
+	return out
+}
+
+func (s *Store) Value(key string) (any, error) {
+	var values map[string]any
+	var err error
+	if _, policyKey := configurableTypes[key]; policyKey {
+		values, err = s.Values()
+		if err != nil {
+			return nil, err
+		}
+		value, ok := values[key]
+		if !ok {
+			return nil, fmt.Errorf("unknown config key %q", key)
+		}
+		return value, nil
+	}
+	values, err = s.EffectiveValues()
+	if err != nil {
+		return nil, err
+	}
+	value, ok := values[normalizeLookupKey(key)]
 	if !ok {
 		return nil, fmt.Errorf("unknown config key %q", key)
 	}
 	return value, nil
+}
+
+func normalizeLookupKey(key string) string {
+	key = strings.ReplaceAll(key, ".", "_")
+	return strings.ReplaceAll(key, "-", "_")
 }
 
 func (s *Store) Int(key string, fallback int) int {
@@ -269,6 +426,9 @@ func (s *Store) Set(key string, value any) error {
 }
 
 func (s *Store) SetVersioned(key string, value any, previousVersion string) error {
+	if !publicKey(key) {
+		return errors.New("credential keys are owned by the runtime secret store")
+	}
 	if err := validateKeyValue(key, value); err != nil {
 		return err
 	}
@@ -276,11 +436,15 @@ func (s *Store) SetVersioned(key string, value any, previousVersion string) erro
 	// precision. Normalize integral values before YAML encoding; yaml would
 	// otherwise persist json.Number as a quoted string.
 	if encoded, ok := value.(json.Number); ok {
-		parsed, err := encoded.Int64()
-		if err != nil {
-			return fmt.Errorf("%s must be an integer", key)
+		if parsed, err := encoded.Int64(); err == nil {
+			value = parsed
+		} else {
+			parsed, floatErr := encoded.Float64()
+			if floatErr != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+				return fmt.Errorf("%s must be numeric", key)
+			}
+			value = parsed
 		}
-		value = parsed
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -317,6 +481,385 @@ func (s *Store) SetVersioned(key string, value any, previousVersion string) erro
 		return fmt.Errorf("encode config value: %w", err)
 	}
 	setMappingChild(node, leaf, valueNode)
+	return s.writeLocked(root)
+}
+
+const maxWorkspaces = 64
+
+const maxModelConcurrencyEntries = 64
+
+type TypedFactsMutation = configcontract.TypedFactsMutation
+type APIHTTPListenerMutation = configcontract.APIHTTPListenerMutation
+type ModelConcurrencyMutation = configcontract.ModelConcurrencyMutation
+
+type modelConcurrencyEntry struct {
+	Key   string `yaml:"key" json:"key"`
+	Limit int    `yaml:"limit" json:"limit"`
+}
+
+func (s *Store) SetTypedFacts(change TypedFactsMutation) error {
+	if change.PromoteThreshold != nil && *change.PromoteThreshold <= 0 {
+		return errors.New("typed facts promote threshold must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{}
+	if change.Enabled != nil {
+		updates["typed_facts_enabled"] = *change.Enabled
+	}
+	if change.AutoPromote != nil {
+		updates["kb_typed_facts_auto_promote_enabled"] = *change.AutoPromote
+	}
+	if change.PromoteThreshold != nil {
+		updates["kb_typed_facts_promote_threshold"] = *change.PromoteThreshold
+	}
+	for key, value := range updates {
+		if err := setEncoded(root, key, value); err != nil {
+			return err
+		}
+	}
+	return s.writeLocked(root)
+}
+
+func (s *Store) SetAPIHTTPListener(change APIHTTPListenerMutation) error {
+	if change.HTTPPort < 0 || change.HTTPPort > 65535 || change.RateLimitPerMin <= 0 {
+		return errors.New("invalid API HTTP listener settings")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	if err := setEncoded(root, "server_api_http_port", change.HTTPPort); err != nil {
+		return err
+	}
+	if err := setEncoded(root, "server_api_rate_limit_per_min", change.RateLimitPerMin); err != nil {
+		return err
+	}
+	return s.writeLocked(root)
+}
+
+func (s *Store) SetModelConcurrency(change ModelConcurrencyMutation) error {
+	if strings.TrimSpace(change.Model) == "" || change.Model != strings.TrimSpace(change.Model) ||
+		change.Limit <= 0 {
+		return errors.New("invalid model concurrency setting")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	var entries []modelConcurrencyEntry
+	if node := mappingChild(root, "concurrency_per_model", false); node != nil {
+		if err := node.Decode(&entries); err != nil {
+			return errors.New("concurrency_per_model must be a model/limit list")
+		}
+	}
+	for i := range entries {
+		if entries[i].Key == change.Model {
+			entries[i].Limit = change.Limit
+			if err := setEncoded(root, "concurrency_per_model", entries); err != nil {
+				return err
+			}
+			if err := setEncoded(root, "concurrency_per_model_count", len(entries)); err != nil {
+				return err
+			}
+			return s.writeLocked(root)
+		}
+	}
+	if len(entries) >= maxModelConcurrencyEntries {
+		return errors.New("model concurrency registry full")
+	}
+	entries = append(entries, modelConcurrencyEntry{Key: change.Model, Limit: change.Limit})
+	if err := setEncoded(root, "concurrency_per_model", entries); err != nil {
+		return err
+	}
+	if err := setEncoded(root, "concurrency_per_model_count", len(entries)); err != nil {
+		return err
+	}
+	return s.writeLocked(root)
+}
+
+func (s *Store) RemoveModelConcurrency(model string) error {
+	if strings.TrimSpace(model) == "" || model != strings.TrimSpace(model) {
+		return errors.New("model is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	var entries []modelConcurrencyEntry
+	if node := mappingChild(root, "concurrency_per_model", false); node != nil {
+		if err := node.Decode(&entries); err != nil {
+			return errors.New("concurrency_per_model must be a model/limit list")
+		}
+	}
+	kept := entries[:0]
+	for _, entry := range entries {
+		if entry.Key != model {
+			kept = append(kept, entry)
+		}
+	}
+	if err := setEncoded(root, "concurrency_per_model", kept); err != nil {
+		return err
+	}
+	if err := setEncoded(root, "concurrency_per_model_count", len(kept)); err != nil {
+		return err
+	}
+	return s.writeLocked(root)
+}
+
+type WorkspaceMutation struct {
+	Path     string `json:"path"`
+	Provider string `json:"provider,omitempty"`
+	Remote   string `json:"remote,omitempty"`
+	Head     string `json:"head,omitempty"`
+}
+
+type RoundtablePreset struct {
+	Models                       []string `json:"models"`
+	Personas                     []string `json:"personas"`
+	MinSuccessful                int      `json:"min_successful"`
+	MaxCostUSD                   float64  `json:"max_cost_usd"`
+	MaxRounds                    int      `json:"max_rounds"`
+	ConvergeThreshold            int      `json:"converge_threshold"`
+	DeadlineMS                   int      `json:"deadline_ms"`
+	Turns                        string   `json:"turns,omitempty"`
+	PipelineDoneBar              string   `json:"pipeline_done_bar,omitempty"`
+	PipelineMaxPasses            int      `json:"pipeline_max_passes"`
+	PipelineMaxAttemptsPerPass   int      `json:"pipeline_max_attempts_per_pass"`
+	PipelineMaxCostUSD           float64  `json:"pipeline_max_cost_usd"`
+	PipelineMaxTotalCostUSD      float64  `json:"pipeline_max_total_cost_usd"`
+	PipelineGateTTLH             int      `json:"pipeline_gate_ttl_h"`
+	PipelineParkedReleasesSlot   int      `json:"pipeline_parked_releases_slot"`
+	PipelineUnknownContextTokens int      `json:"pipeline_unknown_context_tokens"`
+	Name                         string   `json:"name"`
+}
+
+func decodeStringSlice(root *yaml.Node, key string) ([]string, error) {
+	node := mappingChild(root, key, false)
+	if node == nil {
+		return []string{}, nil
+	}
+	var values []string
+	if err := node.Decode(&values); err != nil {
+		return nil, fmt.Errorf("%s must be a string list: %w", key, err)
+	}
+	return values, nil
+}
+
+func setEncoded(root *yaml.Node, key string, value any) error {
+	node := &yaml.Node{}
+	if err := node.Encode(value); err != nil {
+		return err
+	}
+	setMappingChild(root, key, node)
+	return nil
+}
+
+func aligned(values []string, n int) []string {
+	if len(values) >= n {
+		return values[:n]
+	}
+	return append(values, make([]string, n-len(values))...)
+}
+
+func (s *Store) WorkspaceAdd(change WorkspaceMutation) error {
+	if !filepath.IsAbs(change.Path) || strings.IndexFunc(change.Path, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return errors.New("workspace path must be an absolute clean path")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	paths, err := decodeStringSlice(root, "workspaces")
+	if err != nil {
+		return err
+	}
+	providers, err := decodeStringSlice(root, "workspace_providers")
+	if err != nil {
+		return err
+	}
+	remotes, err := decodeStringSlice(root, "workspace_vcs_remote")
+	if err != nil {
+		return err
+	}
+	heads, err := decodeStringSlice(root, "workspace_vcs_head")
+	if err != nil {
+		return err
+	}
+	providers, remotes, heads = aligned(providers, len(paths)), aligned(remotes, len(paths)), aligned(heads, len(paths))
+	for i, registered := range paths {
+		if registered != change.Path {
+			continue
+		}
+		if change.Provider != "" {
+			providers[i] = change.Provider
+			if change.Provider == "shared" {
+				providers[i] = ""
+			}
+		}
+		if change.Remote != "" {
+			remotes[i] = change.Remote
+		}
+		if change.Head != "" {
+			heads[i] = change.Head
+		}
+		if err := setWorkspaceLists(root, paths, providers, remotes, heads); err != nil {
+			return err
+		}
+		if err := s.writeLocked(root); err != nil {
+			return err
+		}
+		return errors.New("workspace already exists")
+	}
+	if len(paths) >= maxWorkspaces {
+		keptPaths, keptProviders, keptRemotes, keptHeads := []string{}, []string{}, []string{}, []string{}
+		for i, registered := range paths {
+			if _, statErr := os.Stat(registered); errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+			keptPaths = append(keptPaths, registered)
+			keptProviders = append(keptProviders, providers[i])
+			keptRemotes = append(keptRemotes, remotes[i])
+			keptHeads = append(keptHeads, heads[i])
+		}
+		paths, providers, remotes, heads = keptPaths, keptProviders, keptRemotes, keptHeads
+	}
+	if len(paths) >= maxWorkspaces {
+		return errors.New("workspace registry full")
+	}
+	provider := change.Provider
+	if provider == "shared" {
+		provider = ""
+	}
+	paths = append(paths, change.Path)
+	providers = append(providers, provider)
+	remotes = append(remotes, change.Remote)
+	heads = append(heads, change.Head)
+	if err := setWorkspaceLists(root, paths, providers, remotes, heads); err != nil {
+		return err
+	}
+	return s.writeLocked(root)
+}
+
+func setWorkspaceLists(root *yaml.Node, paths, providers, remotes, heads []string) error {
+	for key, value := range map[string]any{
+		"workspaces": paths, "workspace_providers": providers,
+		"workspace_vcs_remote": remotes, "workspace_vcs_head": heads,
+		"workspace_count": len(paths),
+	} {
+		if err := setEncoded(root, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) WorkspaceRemove(workspacePath string) error {
+	if workspacePath == "" {
+		return errors.New("workspace path is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	paths, err := decodeStringSlice(root, "workspaces")
+	if err != nil {
+		return err
+	}
+	providers, _ := decodeStringSlice(root, "workspace_providers")
+	remotes, _ := decodeStringSlice(root, "workspace_vcs_remote")
+	heads, _ := decodeStringSlice(root, "workspace_vcs_head")
+	providers, remotes, heads = aligned(providers, len(paths)), aligned(remotes, len(paths)), aligned(heads, len(paths))
+	for i, registered := range paths {
+		if registered != workspacePath {
+			continue
+		}
+		paths = append(paths[:i], paths[i+1:]...)
+		providers = append(providers[:i], providers[i+1:]...)
+		remotes = append(remotes[:i], remotes[i+1:]...)
+		heads = append(heads[:i], heads[i+1:]...)
+		if err := setWorkspaceLists(root, paths, providers, remotes, heads); err != nil {
+			return err
+		}
+		return s.writeLocked(root)
+	}
+	return errors.New("workspace not found")
+}
+
+func (s *Store) ApplyRoundtablePreset(p RoundtablePreset) error {
+	if p.Name == "" || len(p.Models) != len(p.Personas) || len(p.Models) > 32 {
+		return errors.New("invalid roundtable preset")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	values := map[string]any{
+		"ensemble_reference_models": p.Models, "ensemble_reference_personas": p.Personas,
+		"ensemble_reference_count": len(p.Models), "ensemble_reference_persona_count": len(p.Personas),
+		"ensemble_min_successful": p.MinSuccessful, "ensemble_max_cost_usd": p.MaxCostUSD,
+		"roundtable_max_rounds": p.MaxRounds, "roundtable_converge_threshold": p.ConvergeThreshold,
+		"roundtable_deadline_ms": p.DeadlineMS, "roundtable_pipeline_max_passes": p.PipelineMaxPasses,
+		"roundtable_pipeline_max_attempts_per_pass":  p.PipelineMaxAttemptsPerPass,
+		"roundtable_pipeline_max_cost_usd":           p.PipelineMaxCostUSD,
+		"roundtable_pipeline_max_total_cost_usd":     p.PipelineMaxTotalCostUSD,
+		"roundtable_pipeline_gate_ttl_h":             p.PipelineGateTTLH,
+		"roundtable_pipeline_parked_releases_slot":   p.PipelineParkedReleasesSlot,
+		"roundtable_pipeline_unknown_context_tokens": p.PipelineUnknownContextTokens,
+		"roundtable_default":                         p.Name,
+	}
+	if p.Turns != "" {
+		values["roundtable_turns"] = p.Turns
+	}
+	if p.PipelineDoneBar != "" {
+		values["roundtable_pipeline_done_bar"] = p.PipelineDoneBar
+	}
+	for key, value := range values {
+		if err := setEncoded(root, key, value); err != nil {
+			return err
+		}
+	}
+	return s.writeLocked(root)
+}
+
+func (s *Store) PersistDefaults() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.read()
+	if err != nil {
+		return err
+	}
+	for key, value := range declaredDefaults {
+		if !publicKey(key) {
+			continue
+		}
+		if mappingChild(root, key, false) != nil {
+			continue
+		}
+		if err := setEncoded(root, key, value); err != nil {
+			return err
+		}
+	}
+	return s.writeLocked(root)
+}
+
+func (s *Store) writeLocked(root *yaml.Node) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
@@ -356,6 +899,9 @@ func (s *Store) Version(key string) (string, error) {
 	root, err := s.read()
 	if err != nil {
 		return "", err
+	}
+	if key == "" {
+		return configNodeVersion(root), nil
 	}
 	return configNodeVersion(mappingChild(root, key, false)), nil
 }
@@ -413,7 +959,18 @@ func validateKeyValue(key string, value any) error {
 	}
 	typeName, allowed := configurableTypes[key]
 	if !allowed {
-		return fmt.Errorf("config key %q is not editable", key)
+		normalized := normalizeLookupKey(key)
+		if declared, exists := declaredDefaults[normalized]; exists {
+			return validateDeclaredType(key, declared, value)
+		}
+		root := strings.Split(key, ".")[0]
+		if !strings.Contains(key, ".") || !editableStructuredRoots[root] {
+			return fmt.Errorf("config key %q is not editable", key)
+		}
+		if !supportedConfigValue(value) {
+			return fmt.Errorf("config key %q has an unsupported value", key)
+		}
+		return nil
 	}
 	switch typeName {
 	case "int":
@@ -432,6 +989,40 @@ func validateKeyValue(key string, value any) error {
 	case "bool":
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("%s must be boolean", key)
+		}
+	}
+	return nil
+}
+
+var editableStructuredRoots = map[string]bool{
+	"autonomy": true, "auxiliary": true, "charter": true, "concurrency": true,
+	"dogfood": true, "ensemble": true, "identity": true, "intelligence": true,
+	"kb": true, "learning": true, "memory": true, "modules": true,
+	"roundtable": true, "sandbox": true, "server": true, "transport": true,
+	"trigger": true, "vault": true,
+}
+
+func supportedConfigValue(value any) bool {
+	switch value.(type) {
+	case nil, bool, string, json.Number, float64, int, int64, uint64,
+		[]any, map[string]any, []TriggerRule:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateDeclaredType(key string, declared, value any) error {
+	switch declared.(type) {
+	case string:
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s must be a string", key)
+		}
+	case json.Number, float64:
+		switch value.(type) {
+		case json.Number, float64, int, int64, uint64, bool:
+		default:
+			return fmt.Errorf("%s must be numeric or boolean", key)
 		}
 	}
 	return nil

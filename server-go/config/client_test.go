@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JBailes/aimee/server-go/bus"
-	contract "github.com/JBailes/aimee/server-go/config"
-	moduleconfig "github.com/JBailes/aimee/server-go/modules/config"
+	"github.com/RakuenSoftware/aimee-module-config/server-go/bus"
+	contract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
+	moduleconfig "github.com/RakuenSoftware/aimee-module-config/server-go/modules/config"
 )
 
 type handlerCaller struct{ handler bus.ModuleHandler }

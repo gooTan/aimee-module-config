@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -86,6 +88,82 @@ func TestEditableProjectionAndStructuralConflictsFailClosed(t *testing.T) {
 	content, _ := os.ReadFile(path)
 	if !strings.Contains(string(content), "autonomy: broken") {
 		t.Fatalf("config mutated:\n%s", content)
+	}
+}
+
+func TestEffectiveSnapshotNeverExposesCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	content := "db2_url: postgres://plaintext\nembedder_api_key: leaked\nkb:\n  curator:\n    provider_api_key: nested\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := NewStore(path)
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"db2_url", "embedder_api_key", "kb_curator_provider_api_key"} {
+		if _, exists := values[key]; exists {
+			t.Fatalf("credential %q leaked in snapshot", key)
+		}
+		if err := store.Set(key, "replacement"); err == nil {
+			t.Fatalf("credential %q accepted by config mutation", key)
+		}
+	}
+}
+
+func TestSnapshotVersionAndDynamicDB1Path(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	store, _ := NewStore(path)
+	values, first, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := values["db1_path"]; got != filepath.Join(filepath.Dir(path), "aimee.db") {
+		t.Fatalf("db1_path=%v", got)
+	}
+	if len(first) != 64 {
+		t.Fatalf("document version=%q", first)
+	}
+	if err := store.Set("autonomy.max_turns", 333); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Version("")
+	if err != nil || second == first {
+		t.Fatalf("version after write=%q, err=%v", second, err)
+	}
+}
+
+func TestAtomicMutationsRemainConsistentUnderConcurrency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	store, _ := NewStore(path)
+	enabled, promote := true, false
+	threshold := 7
+	if err := store.SetTypedFacts(TypedFactsMutation{Enabled: &enabled, AutoPromote: &promote,
+		PromoteThreshold: &threshold}); err != nil {
+		t.Fatal(err)
+	}
+	values, _, _ := store.Snapshot()
+	if values["typed_facts_enabled"] != true || values["kb_typed_facts_auto_promote_enabled"] != false ||
+		values["kb_typed_facts_promote_threshold"] != 7 {
+		t.Fatalf("typed-fact mutation was not atomic: %#v", values)
+	}
+
+	var group sync.WaitGroup
+	for i := 1; i <= 16; i++ {
+		group.Add(1)
+		go func(limit int) {
+			defer group.Done()
+			if err := store.SetModelConcurrency(ModelConcurrencyMutation{Model: "shared", Limit: limit}); err != nil {
+				t.Errorf("set model concurrency: %v", err)
+			}
+		}(i)
+	}
+	group.Wait()
+	values, _, _ = store.Snapshot()
+	entries, ok := values["concurrency_per_model"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("concurrent registry=%#v", values["concurrency_per_model"])
 	}
 }
 
@@ -202,4 +280,72 @@ func TestDefaultWallCapRemainsAcceptable(t *testing.T) {
 	if err := store.Set("autonomy.max_wall_secs", float64(MinAutonomyMaxWallSecs)); err != nil {
 		t.Fatalf("exact floor rejected: %v", err)
 	}
+}
+
+func TestMemoryRecallLaneDefaultsAndYAMLOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertValues := func(want map[string]any) {
+		t.Helper()
+		values, err := store.EffectiveValues()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, expected := range want {
+			if got := values[key]; got != expected {
+				t.Errorf("%s = %#v, want %#v", key, got, expected)
+			}
+		}
+	}
+
+	assertValues(map[string]any{
+		"memory_recall_lanes_enabled":       json.Number("0"),
+		"memory_recall_lanes_summary_kinds": "",
+		"memory_recall_lanes_fact_kinds":    "",
+		"memory_recall_lanes_k_summary":     json.Number("0"),
+		"memory_recall_lanes_k_fact":        json.Number("0"),
+		"memory_recall_lanes_floor_summary": json.Number("4"),
+		"memory_recall_lanes_floor_fact":    json.Number("4"),
+	})
+
+	if err := os.WriteFile(path, []byte("memory_recall_lanes:\n"+
+		"  enabled: true\n"+
+		"  summary_kinds: episode\n"+
+		"  fact_kinds: fact,preference\n"+
+		"  k_summary: 30\n"+
+		"  k_fact: 25\n"+
+		"  floor_summary: 6\n"+
+		"  floor_fact: 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertValues(map[string]any{
+		"memory_recall_lanes_enabled":       true,
+		"memory_recall_lanes_summary_kinds": "episode",
+		"memory_recall_lanes_fact_kinds":    "fact,preference",
+		"memory_recall_lanes_k_summary":     30,
+		"memory_recall_lanes_k_fact":        25,
+		"memory_recall_lanes_floor_summary": 6,
+		"memory_recall_lanes_floor_fact":    3,
+	})
+
+	if err := os.WriteFile(path, []byte("memory_recall_lanes:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertValues(map[string]any{
+		"memory_recall_lanes_enabled":       false,
+		"memory_recall_lanes_floor_summary": json.Number("4"),
+		"memory_recall_lanes_floor_fact":    json.Number("4"),
+	})
+
+	if err := os.WriteFile(path, []byte("memory_recall_lanes:\n  enabled: true\n  floor_summary: 0\n  floor_fact: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertValues(map[string]any{
+		"memory_recall_lanes_enabled":       true,
+		"memory_recall_lanes_floor_summary": 0,
+		"memory_recall_lanes_floor_fact":    0,
+	})
 }
