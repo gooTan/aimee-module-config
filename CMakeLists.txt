@@ -23,6 +23,8 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/bus/ring.go
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/bus/wire.go
         ${CMAKE_CURRENT_SOURCE_DIR}/server-go/config/client.go
+        ${CMAKE_CURRENT_SOURCE_DIR}/server-go/config/client_test.go
+        ${CMAKE_CURRENT_SOURCE_DIR}/server-go/config/contract_test.go
         ${CMAKE_CURRENT_SOURCE_DIR}/go.mod
         ${CMAKE_CURRENT_SOURCE_DIR}/go.sum
     VERBATIM)
