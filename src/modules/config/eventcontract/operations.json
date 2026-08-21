@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "module": "config",
+  "wire_version": 1,
+  "event_kind": 4609,
+  "stage_id": 1,
+  "encoding": "application/json",
+  "operations": [
+    "values",
+    "value",
+    "string-value",
+    "set-versioned",
+    "version",
+    "trigger-rules"
+  ],
+  "vectors": [
+    {
+      "name": "read-default-integer",
+      "request_json": "{\"operation\":\"value\",\"key\":\"autonomy.max_turns\"}",
+      "response_json": "{\"ok\":true,\"value\":300}"
+    },
+    {
+      "name": "write-integer",
+      "request_json": "{\"operation\":\"set-versioned\",\"key\":\"autonomy.max_turns\",\"value\":321}",
+      "response_json": "{\"ok\":true}"
+    },
+    {
+      "name": "missing-string",
+      "request_json": "{\"operation\":\"string-value\",\"key\":\"roundtable.default\"}",
+      "response_json": "{\"ok\":false,\"code\":\"not_found\",\"error\":\"config key not found\"}"
+    }
+  ]
+}
