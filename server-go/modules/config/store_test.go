@@ -9,6 +9,36 @@ import (
 	"testing"
 )
 
+func TestCanonicalNonZeroDefaults(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "aimee.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"calibration_enabled":         json.Number("1"),
+		"calibration_buckets":         json.Number("10"),
+		"calibration_prior_alpha0":    json.Number("2"),
+		"demotion_enabled":            json.Number("1"),
+		"demotion_window":             json.Number("64"),
+		"bandit_exploration_fraction": json.Number("0.05"),
+		"planner_budget_default":      json.Number("32"),
+		"kb_mdl_tiebreak_enabled":     json.Number("1"),
+		"kb_synthesize_n_attempts":    json.Number("3"),
+		"calibration_prompt_version":  "v1",
+		"calibration_model_version":   "beta-binomial-v1",
+		"kb_fusion_mode":              "rrf",
+	}
+	for key, expected := range want {
+		if got := values[key]; got != expected {
+			t.Errorf("%s default=%#v, want %#v", key, got, expected)
+		}
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {
