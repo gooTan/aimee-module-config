@@ -70,8 +70,9 @@ type Response struct {
 }
 
 var (
-	ErrConfig    = errors.New("config bus client is not configured")
-	ErrMalformed = errors.New("config module returned a malformed response")
+	ErrConfig      = errors.New("config bus client is not configured")
+	ErrMalformed   = errors.New("config module returned a malformed response")
+	ErrUnavailable = errors.New("config module unavailable")
 )
 
 type ModuleError struct {
@@ -123,7 +124,7 @@ func (c *Client) request(request Request) (Response, error) {
 	}
 	reply, err := c.caller.Call(context.Background(), EventConfig, StageConfig, 0, c.deadline, body)
 	if err != nil {
-		return Response{}, err
+		return Response{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if len(reply) == 0 || len(reply) > defaultMaxResponseBodySize {
 		return Response{}, ErrMalformed
