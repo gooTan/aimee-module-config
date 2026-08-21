@@ -30,6 +30,13 @@ type Store struct {
 //go:embed defaults.json
 var defaultsJSON []byte
 
+// metadataJSON is the public mutation/documentation schema that moved with the
+// implementation. Keeping it here prevents Aimee callers from rebuilding a
+// second allowlist from native layouts.
+//
+//go:embed metadata.json
+var metadataJSON []byte
+
 var declaredDefaults = func() map[string]any {
 	var values map[string]any
 	decoder := json.NewDecoder(strings.NewReader(string(defaultsJSON)))
@@ -38,6 +45,30 @@ var declaredDefaults = func() map[string]any {
 		panic(fmt.Sprintf("decode embedded config defaults: %v", err))
 	}
 	return values
+}()
+
+type fieldMetadata struct {
+	Key   string `json:"key"`
+	Type  string `json:"type"`
+	Group string `json:"group"`
+}
+
+var declaredFields = func() map[string]fieldMetadata {
+	var metadata struct {
+		Version int             `json:"version"`
+		Fields  []fieldMetadata `json:"fields"`
+	}
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil || metadata.Version != 1 {
+		panic("decode embedded config metadata")
+	}
+	fields := make(map[string]fieldMetadata, len(metadata.Fields))
+	for _, field := range metadata.Fields {
+		if field.Key == "" || field.Type == "" {
+			panic("invalid embedded config field metadata")
+		}
+		fields[field.Key] = field
+	}
+	return fields
 }()
 
 // Credentials are runtime-secret capabilities, not configuration values. They
@@ -960,6 +991,9 @@ func validateKeyValue(key string, value any) error {
 	typeName, allowed := configurableTypes[key]
 	if !allowed {
 		normalized := normalizeLookupKey(key)
+		if field, exists := declaredFields[normalized]; exists {
+			return validateMetadataType(key, field.Type, value)
+		}
 		if declared, exists := declaredDefaults[normalized]; exists {
 			return validateDeclaredType(key, declared, value)
 		}
@@ -992,6 +1026,57 @@ func validateKeyValue(key string, value any) error {
 		}
 	}
 	return nil
+}
+
+func validateMetadataType(key, typeName string, value any) error {
+	switch typeName {
+	case "string", "string (off|safe|aggressive)":
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string", key)
+		}
+		if typeName != "string" && text != "off" && text != "safe" && text != "aggressive" {
+			return fmt.Errorf("%s must be off, safe, or aggressive", key)
+		}
+	case "bool":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s must be boolean", key)
+		}
+	case "int":
+		if _, ok := number(value); !ok {
+			return fmt.Errorf("%s must be an integer", key)
+		}
+	case "float":
+		if !finiteNumber(value) {
+			return fmt.Errorf("%s must be numeric", key)
+		}
+	default:
+		return fmt.Errorf("config key %q has unsupported metadata type %q", key, typeName)
+	}
+	return nil
+}
+
+func finiteNumber(value any) bool {
+	var numberValue float64
+	switch typed := value.(type) {
+	case int:
+		numberValue = float64(typed)
+	case int64:
+		numberValue = float64(typed)
+	case uint64:
+		numberValue = float64(typed)
+	case float64:
+		numberValue = typed
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return false
+		}
+		numberValue = parsed
+	default:
+		return false
+	}
+	return !math.IsNaN(numberValue) && !math.IsInf(numberValue, 0)
 }
 
 var editableStructuredRoots = map[string]bool{
