@@ -97,6 +97,29 @@ func TestStructuredRegistriesProjectCountsAndAlignedWorkspaceFields(t *testing.T
 	}
 }
 
+func TestWorkingProfileInjectionProjectsFieldsAndCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	document := "identity:\n  working_profile_injection:\n    enabled: true\n    fields:\n      - verbosity\n      - communication_style\n"
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := values["identity_working_profile_injection_fields_count"]; got != 2 {
+		t.Fatalf("field count=%v, want 2", got)
+	}
+	fields, ok := values["identity_working_profile_injection_fields"].([]any)
+	if !ok || len(fields) != 2 || fields[0] != "verbosity" || fields[1] != "communication_style" {
+		t.Fatalf("fields=%#v", values["identity_working_profile_injection_fields"])
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {

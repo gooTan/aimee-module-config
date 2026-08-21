@@ -416,6 +416,14 @@ func projectLegacyStructures(out map[string]any) {
 			out["charter_working_profile_drift_limit"] = value
 		}
 	}
+	if identity, ok := out["identity"].(map[string]any); ok {
+		if injection, ok := identity["working_profile_injection"].(map[string]any); ok {
+			if fields, ok := injection["fields"].([]any); ok {
+				out["identity_working_profile_injection_fields"] = fields
+				out["identity_working_profile_injection_fields_count"] = len(fields)
+			}
+		}
+	}
 }
 
 func (s *Store) Value(key string) (any, error) {
