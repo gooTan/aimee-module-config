@@ -39,6 +39,31 @@ func TestCanonicalNonZeroDefaults(t *testing.T) {
 	}
 }
 
+func TestLegacyNestedSynthesisKeysProjectToCallerContract(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	if err := os.WriteFile(path, []byte("intelligence:\n  synthesize:\n    mdl_tiebreak_enabled: false\n    synthesize_n_attempts: 7\n    reflection_shadow: true\n    synthesize_command: run-synth\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"kb_mdl_tiebreak_enabled":        false,
+		"kb_synthesize_n_attempts":       7,
+		"kb_reflection_synthesis_shadow": true,
+		"kb_synthesize_command":          "run-synth",
+	} {
+		if got := values[key]; got != want {
+			t.Errorf("%s=%#v, want %#v", key, got, want)
+		}
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {
