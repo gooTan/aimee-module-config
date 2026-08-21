@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -102,6 +103,9 @@ var lookupAliases = map[string]string{
 	"intelligence_synthesize_synthesize_n_attempts": "kb_synthesize_n_attempts",
 	"intelligence_synthesize_reflection_shadow":     "kb_reflection_synthesis_shadow",
 	"intelligence_synthesize_synthesize_command":    "kb_synthesize_command",
+	"session_virtual_context_enabled":               "virtual_context_enabled",
+	"session_virtual_context_assembly_budget":       "virtual_context_assembly_budget",
+	"kb_mining_failure_learning_enabled":            "kb_mining_failure_learning_enabled",
 	"aimee_api_http_port":                           "server_api_http_port",
 	"aimee_api_tls_port":                            "server_api_tls_port",
 	"aimee_api_mtls":                                "server_api_mtls",
@@ -346,7 +350,72 @@ func (s *Store) effectiveValuesLocked(root *yaml.Node) map[string]any {
 			out[normalizeLookupKey(root.Content[i].Value)] = publicValue(value)
 		}
 	}
+	projectLegacyStructures(out)
 	return out
+}
+
+func projectLegacyStructures(out map[string]any) {
+	if raw, ok := out["workspaces"].([]any); ok {
+		paths := make([]any, 0, len(raw))
+		providers := make([]any, 0, len(raw))
+		remotes := make([]any, 0, len(raw))
+		heads := make([]any, 0, len(raw))
+		for _, item := range raw {
+			pathValue, provider, remote, head := "", "", "", ""
+			switch value := item.(type) {
+			case string:
+				pathValue = value
+			case map[string]any:
+				pathValue, _ = value["path"].(string)
+				provider, _ = value["provider"].(string)
+				remote, _ = value["remote"].(string)
+				head, _ = value["head"].(string)
+			}
+			if pathValue == "" {
+				continue
+			}
+			paths = append(paths, pathValue)
+			providers = append(providers, provider)
+			remotes = append(remotes, remote)
+			heads = append(heads, head)
+		}
+		out["workspaces"] = paths
+		out["workspace_providers"] = providers
+		out["workspace_vcs_remote"] = remotes
+		out["workspace_vcs_head"] = heads
+		out["workspace_count"] = len(paths)
+	}
+	if rules, ok := out["trigger_rules"].([]any); ok {
+		out["trigger_rule_count"] = len(rules)
+	}
+	if servers, ok := out["lsp_servers"].([]any); ok {
+		out["lsp_server_count"] = len(servers)
+	}
+	if memory, ok := out["memory"].(map[string]any); ok {
+		if dispositions, ok := memory["dispositions"].(map[string]any); ok {
+			rows := make([]any, 0, len(dispositions))
+			for name, value := range dispositions {
+				rows = append(rows, map[string]any{"name": name, "value": value, "source": 1})
+			}
+			slices.SortFunc(rows, func(a, b any) int {
+				return strings.Compare(a.(map[string]any)["name"].(string), b.(map[string]any)["name"].(string))
+			})
+			out["dispositions"] = rows
+			out["disposition_count"] = len(rows)
+			out["disposition_global_count"] = len(rows)
+		}
+	}
+	if charter, ok := out["charter"].(map[string]any); ok {
+		for _, field := range []string{"safety_axioms", "hard_constraints", "values", "tone_boundaries"} {
+			if values, ok := charter[field].([]any); ok {
+				out["charter_"+field] = values
+				out["charter_"+field+"_count"] = len(values)
+			}
+		}
+		if value, ok := charter["working_profile_drift_limit"]; ok {
+			out["charter_working_profile_drift_limit"] = value
+		}
+	}
 }
 
 func (s *Store) Value(key string) (any, error) {

@@ -64,6 +64,39 @@ func TestLegacyNestedSynthesisKeysProjectToCallerContract(t *testing.T) {
 	}
 }
 
+func TestStructuredRegistriesProjectCountsAndAlignedWorkspaceFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	document := "workspaces:\n  - /one\n  - path: /two\n    provider: git\n    remote: origin\n    head: main\ntrigger_rules:\n  - source: cron\nlsp_servers:\n  - name: clangd\nmemory:\n  dispositions:\n    skepticism: 0.8\n    literalism: 0.5\n"
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := NewStore(path)
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"workspace_count":          2,
+		"trigger_rule_count":       1,
+		"lsp_server_count":         1,
+		"disposition_count":        2,
+		"disposition_global_count": 2,
+	} {
+		if got := values[key]; got != want {
+			t.Errorf("%s=%#v, want %#v", key, got, want)
+		}
+	}
+	paths := values["workspaces"].([]any)
+	providers := values["workspace_providers"].([]any)
+	if paths[1] != "/two" || providers[1] != "git" {
+		t.Fatalf("workspace projection paths=%#v providers=%#v", paths, providers)
+	}
+	rows := values["dispositions"].([]any)
+	if len(rows) != 2 || rows[0].(map[string]any)["name"] != "literalism" {
+		t.Fatalf("disposition projection=%#v", rows)
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {
