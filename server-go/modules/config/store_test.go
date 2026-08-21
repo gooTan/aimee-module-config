@@ -237,6 +237,32 @@ func TestProfileConfigLifecycle(t *testing.T) {
 	}
 }
 
+func TestProfileLifecycleUsesGlobalRootAndProtectsActiveProfile(t *testing.T) {
+	root := t.TempDir()
+	defaultStore, err := NewStore(filepath.Join(root, "aimee.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultStore.ProfileCreate("active"); err != nil {
+		t.Fatal(err)
+	}
+	activePath := filepath.Join(root, "profiles", "active", "aimee.yaml")
+	activeStore, err := NewStore(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := activeStore.ProfileList()
+	if err != nil || len(profiles) != 1 || profiles[0] != "active" {
+		t.Fatalf("profiles=%v, %v", profiles, err)
+	}
+	if err := activeStore.ProfileDelete("active"); err == nil {
+		t.Fatal("active profile deletion succeeded")
+	}
+	if present, err := activeStore.ProfilePresent("active"); err != nil || !present {
+		t.Fatalf("active profile was damaged: present=%v err=%v", present, err)
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {

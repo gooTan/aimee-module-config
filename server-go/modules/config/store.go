@@ -22,15 +22,19 @@ import (
 
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
-func (s *Store) profileConfigPath(name string) (string, error) {
-	if !profileNamePattern.MatchString(name) || name == "." || name == ".." {
-		return "", errors.New("invalid profile name")
-	}
+func (s *Store) profileRoot() string {
 	root := filepath.Dir(s.path)
 	if filepath.Base(filepath.Dir(root)) == "profiles" {
 		root = filepath.Dir(filepath.Dir(root))
 	}
-	return filepath.Join(root, "profiles", name, "aimee.yaml"), nil
+	return filepath.Join(root, "profiles")
+}
+
+func (s *Store) profileConfigPath(name string) (string, error) {
+	if !profileNamePattern.MatchString(name) || name == "." || name == ".." {
+		return "", errors.New("invalid profile name")
+	}
+	return filepath.Join(s.profileRoot(), name, "aimee.yaml"), nil
 }
 
 // ProfileCreate is the only implementation of a profile's configuration
@@ -89,7 +93,7 @@ func (s *Store) ProfileList() ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	root := filepath.Join(filepath.Dir(s.path), "profiles")
+	root := s.profileRoot()
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return []string{}, nil
@@ -114,6 +118,9 @@ func (s *Store) ProfileDelete(name string) error {
 	profilePath, err := s.profileConfigPath(name)
 	if err != nil {
 		return err
+	}
+	if filepath.Clean(profilePath) == filepath.Clean(s.path) {
+		return errors.New("cannot delete active profile")
 	}
 	root := filepath.Dir(profilePath)
 	info, err := os.Lstat(root)
