@@ -97,6 +97,33 @@ func TestStructuredRegistriesProjectCountsAndAlignedWorkspaceFields(t *testing.T
 	}
 }
 
+func TestWorkspaceMutationProjectionPreservesParallelMetadata(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "aimee.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := WorkspaceMutation{
+		Path: "/client/repo", Provider: "mirror", Remote: "ssh://example.invalid/repo",
+		Head: "0123456789abcdef",
+	}
+	if err := store.WorkspaceAdd(change); err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"workspaces": "/client/repo", "workspace_providers": "mirror",
+		"workspace_vcs_remote": "ssh://example.invalid/repo", "workspace_vcs_head": "0123456789abcdef",
+	} {
+		items, ok := values[key].([]any)
+		if !ok || len(items) != 1 || items[0] != want {
+			t.Errorf("%s=%#v, want [%q]", key, values[key], want)
+		}
+	}
+}
+
 func TestWorkingProfileInjectionProjectsFieldsAndCount(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	document := "identity:\n  working_profile_injection:\n    enabled: true\n    fields:\n      - verbosity\n      - communication_style\n"

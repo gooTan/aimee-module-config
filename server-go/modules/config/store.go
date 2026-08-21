@@ -416,20 +416,38 @@ func (s *Store) effectiveValuesLocked(root *yaml.Node) map[string]any {
 
 func projectLegacyStructures(out map[string]any) {
 	if raw, ok := out["workspaces"].([]any); ok {
+		existingProviders, _ := out["workspace_providers"].([]any)
+		existingRemotes, _ := out["workspace_vcs_remote"].([]any)
+		existingHeads, _ := out["workspace_vcs_head"].([]any)
 		paths := make([]any, 0, len(raw))
 		providers := make([]any, 0, len(raw))
 		remotes := make([]any, 0, len(raw))
 		heads := make([]any, 0, len(raw))
-		for _, item := range raw {
+		for index, item := range raw {
 			pathValue, provider, remote, head := "", "", "", ""
+			if index < len(existingProviders) {
+				provider, _ = existingProviders[index].(string)
+			}
+			if index < len(existingRemotes) {
+				remote, _ = existingRemotes[index].(string)
+			}
+			if index < len(existingHeads) {
+				head, _ = existingHeads[index].(string)
+			}
 			switch value := item.(type) {
 			case string:
 				pathValue = value
 			case map[string]any:
 				pathValue, _ = value["path"].(string)
-				provider, _ = value["provider"].(string)
-				remote, _ = value["remote"].(string)
-				head, _ = value["head"].(string)
+				if field, present := value["provider"].(string); present {
+					provider = field
+				}
+				if field, present := value["remote"].(string); present {
+					remote = field
+				}
+				if field, present := value["head"].(string); present {
+					head = field
+				}
 			}
 			if pathValue == "" {
 				continue
