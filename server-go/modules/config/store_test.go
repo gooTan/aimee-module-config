@@ -120,6 +120,33 @@ func TestWorkingProfileInjectionProjectsFieldsAndCount(t *testing.T) {
 	}
 }
 
+func TestProfileConfigLifecycle(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(filepath.Join(root, "aimee.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if present, err := store.ProfilePresent("coder"); err != nil || present {
+		t.Fatalf("initial presence=(%v, %v), want (false, nil)", present, err)
+	}
+	if err := store.ProfileCreate("coder"); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := store.ProfilePresent("coder"); err != nil || !present {
+		t.Fatalf("presence=(%v, %v), want (true, nil)", present, err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "profiles", "coder", "aimee.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "# Created by the Aimee config module.\nprovider: claude\nguardrail_mode: approve\n" {
+		t.Fatalf("unexpected profile config %q", body)
+	}
+	if err := store.ProfileCreate("../escape"); err == nil {
+		t.Fatal("path traversal profile name accepted")
+	}
+}
+
 func TestPolicyWritesPreserveUnrelatedConfigAndAreImmediatelyLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	if err := os.WriteFile(path, []byte("provider: codex\ncustom:\n  keep: yes\nautonomy:\n  concurrency: 2\n"), 0o600); err != nil {

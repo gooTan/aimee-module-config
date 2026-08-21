@@ -59,6 +59,8 @@ const (
 	OpSetAPIHTTPListener     Operation = "set-api-http-listener"
 	OpSetModelConcurrency    Operation = "set-model-concurrency"
 	OpRemoveModelConcurrency Operation = "remove-model-concurrency"
+	OpProfileCreate          Operation = "profile-create"
+	OpProfilePresent         Operation = "profile-present"
 )
 
 type Request struct {
@@ -82,6 +84,10 @@ type APIHTTPListenerMutation struct {
 type ModelConcurrencyMutation struct {
 	Model string `json:"model"`
 	Limit int    `json:"limit,omitempty"`
+}
+
+type ProfileMutation struct {
+	Name string `json:"name"`
 }
 
 type Response struct {

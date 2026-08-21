@@ -20,7 +20,9 @@
     "set-typed-facts",
     "set-api-http-listener",
     "set-model-concurrency",
-    "remove-model-concurrency"
+    "remove-model-concurrency",
+    "profile-create",
+    "profile-present"
   ],
   "vectors": [
     {
@@ -56,6 +58,11 @@
     {
       "name": "atomic-model-concurrency-remove",
       "request_json": "{\"operation\":\"remove-model-concurrency\",\"value\":{\"model\":\"openai/gpt-5\"}}",
+      "response_json": "{\"ok\":true}"
+    },
+    {
+      "name": "profile-create",
+      "request_json": "{\"operation\":\"profile-create\",\"value\":{\"name\":\"coder\"}}",
       "response_json": "{\"ok\":true}"
     }
   ]

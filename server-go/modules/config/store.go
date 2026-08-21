@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +19,65 @@ import (
 	configcontract "github.com/RakuenSoftware/aimee-module-config/server-go/config"
 	"go.yaml.in/yaml/v3"
 )
+
+var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+func (s *Store) profileConfigPath(name string) (string, error) {
+	if !profileNamePattern.MatchString(name) || name == "." || name == ".." {
+		return "", errors.New("invalid profile name")
+	}
+	root := filepath.Dir(s.path)
+	if filepath.Base(filepath.Dir(root)) == "profiles" {
+		root = filepath.Dir(filepath.Dir(root))
+	}
+	return filepath.Join(root, "profiles", name, "aimee.yaml"), nil
+}
+
+// ProfileCreate is the only implementation of a profile's configuration
+// bootstrap. Native callers request it over the event bus and never construct
+// or write configuration documents themselves.
+func (s *Store) ProfileCreate(name string) error {
+	path, err := s.profileConfigPath(name)
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	document := []byte("# Created by the Aimee config module.\nprovider: claude\nguardrail_mode: approve\n")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	if _, err = file.Write(document); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func (s *Store) ProfilePresent(name string) (bool, error) {
+	path, err := s.profileConfigPath(name)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
+}
 
 type Store struct {
 	path string

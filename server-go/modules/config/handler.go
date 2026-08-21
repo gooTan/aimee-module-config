@@ -130,6 +130,20 @@ func handleRequest(store *Store, request configcontract.Request) configcontract.
 		if err = decodeRequestValue(request.Value, &change); err == nil {
 			err = store.RemoveModelConcurrency(change.Model)
 		}
+	case configcontract.OpProfileCreate:
+		var change configcontract.ProfileMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.ProfileCreate(change.Name)
+		}
+	case configcontract.OpProfilePresent:
+		var change configcontract.ProfileMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			var present bool
+			present, err = store.ProfilePresent(change.Name)
+			if err == nil && !present {
+				err = errors.New("profile not found")
+			}
+		}
 	default:
 		return configcontract.Response{Code: "invalid_operation", Error: "unknown config operation"}
 	}
