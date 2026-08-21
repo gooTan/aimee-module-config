@@ -22,7 +22,9 @@
     "set-model-concurrency",
     "remove-model-concurrency",
     "profile-create",
-    "profile-present"
+    "profile-present",
+    "profile-list",
+    "profile-delete"
   ],
   "vectors": [
     {
@@ -64,6 +66,11 @@
       "name": "profile-create",
       "request_json": "{\"operation\":\"profile-create\",\"value\":{\"name\":\"coder\"}}",
       "response_json": "{\"ok\":true}"
+    },
+    {
+      "name": "profile-present-absent",
+      "request_json": "{\"operation\":\"profile-present\",\"value\":{\"name\":\"missing\"}}",
+      "response_json": "{\"ok\":true,\"present\":false}"
     }
   ]
 }

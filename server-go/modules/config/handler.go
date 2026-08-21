@@ -140,9 +140,20 @@ func handleRequest(store *Store, request configcontract.Request) configcontract.
 		if err = decodeRequestValue(request.Value, &change); err == nil {
 			var present bool
 			present, err = store.ProfilePresent(change.Name)
-			if err == nil && !present {
-				err = errors.New("profile not found")
+			if err == nil {
+				response.Present = &present
 			}
+		}
+	case configcontract.OpProfileList:
+		var profiles []string
+		profiles, err = store.ProfileList()
+		if err == nil {
+			response.Profiles = &profiles
+		}
+	case configcontract.OpProfileDelete:
+		var change configcontract.ProfileMutation
+		if err = decodeRequestValue(request.Value, &change); err == nil {
+			err = store.ProfileDelete(change.Name)
 		}
 	default:
 		return configcontract.Response{Code: "invalid_operation", Error: "unknown config operation"}

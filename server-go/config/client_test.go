@@ -85,3 +85,20 @@ func TestClientClassifiesTransportFailuresAsUnavailable(t *testing.T) {
 		t.Fatalf("transport error = %v", err)
 	}
 }
+
+func TestClientProfileLifecycleCrossesContract(t *testing.T) {
+	client := newClient(t)
+	if present, err := client.ProfilePresent("coder"); err != nil || present {
+		t.Fatalf("initial present=(%v, %v)", present, err)
+	}
+	if err := client.ProfileCreate("coder"); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := client.ProfileList()
+	if err != nil || len(profiles) != 1 || profiles[0] != "coder" {
+		t.Fatalf("profiles=%v, %v", profiles, err)
+	}
+	if err := client.ProfileDelete("coder"); err != nil {
+		t.Fatal(err)
+	}
+}

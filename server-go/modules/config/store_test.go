@@ -212,6 +212,10 @@ func TestProfileConfigLifecycle(t *testing.T) {
 	if present, err := store.ProfilePresent("coder"); err != nil || !present {
 		t.Fatalf("presence=(%v, %v), want (true, nil)", present, err)
 	}
+	profiles, err := store.ProfileList()
+	if err != nil || len(profiles) != 1 || profiles[0] != "coder" {
+		t.Fatalf("profiles=%v, %v", profiles, err)
+	}
 	body, err := os.ReadFile(filepath.Join(root, "profiles", "coder", "aimee.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -221,6 +225,15 @@ func TestProfileConfigLifecycle(t *testing.T) {
 	}
 	if err := store.ProfileCreate("../escape"); err == nil {
 		t.Fatal("path traversal profile name accepted")
+	}
+	if err := store.ProfileDelete("coder"); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := store.ProfilePresent("coder"); err != nil || present {
+		t.Fatalf("post-delete presence=(%v, %v), want (false, nil)", present, err)
+	}
+	if err := store.ProfileDelete("coder"); err == nil {
+		t.Fatal("deleting a missing profile succeeded")
 	}
 }
 

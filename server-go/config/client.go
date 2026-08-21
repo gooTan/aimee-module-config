@@ -61,6 +61,8 @@ const (
 	OpRemoveModelConcurrency Operation = "remove-model-concurrency"
 	OpProfileCreate          Operation = "profile-create"
 	OpProfilePresent         Operation = "profile-present"
+	OpProfileList            Operation = "profile-list"
+	OpProfileDelete          Operation = "profile-delete"
 )
 
 type Request struct {
@@ -91,13 +93,15 @@ type ProfileMutation struct {
 }
 
 type Response struct {
-	OK      bool           `json:"ok"`
-	Code    string         `json:"code,omitempty"`
-	Error   string         `json:"error,omitempty"`
-	Value   any            `json:"value,omitempty"`
-	Values  map[string]any `json:"values,omitempty"`
-	Version string         `json:"version,omitempty"`
-	Rules   []TriggerRule  `json:"rules,omitempty"`
+	OK       bool           `json:"ok"`
+	Code     string         `json:"code,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Value    any            `json:"value,omitempty"`
+	Values   map[string]any `json:"values,omitempty"`
+	Version  string         `json:"version,omitempty"`
+	Rules    []TriggerRule  `json:"rules,omitempty"`
+	Present  *bool          `json:"present,omitempty"`
+	Profiles *[]string      `json:"profiles,omitempty"`
 }
 
 var (
@@ -251,6 +255,38 @@ func (c *Client) SetModelConcurrency(change ModelConcurrencyMutation) error {
 func (c *Client) RemoveModelConcurrency(model string) error {
 	_, err := c.request(Request{Operation: OpRemoveModelConcurrency,
 		Value: ModelConcurrencyMutation{Model: model}})
+	return err
+}
+
+func (c *Client) ProfileCreate(name string) error {
+	_, err := c.request(Request{Operation: OpProfileCreate, Value: ProfileMutation{Name: name}})
+	return err
+}
+
+func (c *Client) ProfilePresent(name string) (bool, error) {
+	response, err := c.request(Request{Operation: OpProfilePresent, Value: ProfileMutation{Name: name}})
+	if err != nil {
+		return false, err
+	}
+	if response.Present == nil {
+		return false, ErrMalformed
+	}
+	return *response.Present, nil
+}
+
+func (c *Client) ProfileList() ([]string, error) {
+	response, err := c.request(Request{Operation: OpProfileList})
+	if err != nil {
+		return nil, err
+	}
+	if response.Profiles == nil {
+		return nil, ErrMalformed
+	}
+	return *response.Profiles, nil
+}
+
+func (c *Client) ProfileDelete(name string) error {
+	_, err := c.request(Request{Operation: OpProfileDelete, Value: ProfileMutation{Name: name}})
 	return err
 }
 

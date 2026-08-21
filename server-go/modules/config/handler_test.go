@@ -59,3 +59,27 @@ func TestHandlerRejectsMalformedAndUnknownOperations(t *testing.T) {
 		t.Fatalf("unknown response = %+v", response)
 	}
 }
+
+func TestHandlerOwnsCompleteProfileLifecycle(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "aimee.yaml"))
+	handler := NewHandler(store)
+	present := invoke(t, handler, configcontract.Request{Operation: configcontract.OpProfilePresent,
+		Value: configcontract.ProfileMutation{Name: "coder"}})
+	if !present.OK || present.Present == nil || *present.Present {
+		t.Fatalf("initial presence = %+v", present)
+	}
+	created := invoke(t, handler, configcontract.Request{Operation: configcontract.OpProfileCreate,
+		Value: configcontract.ProfileMutation{Name: "coder"}})
+	if !created.OK {
+		t.Fatalf("create = %+v", created)
+	}
+	listed := invoke(t, handler, configcontract.Request{Operation: configcontract.OpProfileList})
+	if !listed.OK || listed.Profiles == nil || len(*listed.Profiles) != 1 || (*listed.Profiles)[0] != "coder" {
+		t.Fatalf("list = %+v", listed)
+	}
+	deleted := invoke(t, handler, configcontract.Request{Operation: configcontract.OpProfileDelete,
+		Value: configcontract.ProfileMutation{Name: "coder"}})
+	if !deleted.OK {
+		t.Fatalf("delete = %+v", deleted)
+	}
+}

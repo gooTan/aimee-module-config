@@ -37,6 +37,9 @@ func (s *Store) profileConfigPath(name string) (string, error) {
 // bootstrap. Native callers request it over the event bus and never construct
 // or write configuration documents themselves.
 func (s *Store) ProfileCreate(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	path, err := s.profileConfigPath(name)
 	if err != nil {
 		return err
@@ -65,6 +68,9 @@ func (s *Store) ProfileCreate(name string) error {
 }
 
 func (s *Store) ProfilePresent(name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	path, err := s.profileConfigPath(name)
 	if err != nil {
 		return false, err
@@ -77,6 +83,50 @@ func (s *Store) ProfilePresent(name string) (bool, error) {
 		return false, err
 	}
 	return info.Mode().IsRegular(), nil
+}
+
+func (s *Store) ProfileList() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	root := filepath.Join(filepath.Dir(s.path), "profiles")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	profiles := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !profileNamePattern.MatchString(entry.Name()) {
+			continue
+		}
+		profiles = append(profiles, entry.Name())
+	}
+	return profiles, nil
+}
+
+func (s *Store) ProfileDelete(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	profilePath, err := s.profileConfigPath(name)
+	if err != nil {
+		return err
+	}
+	root := filepath.Dir(profilePath)
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New("profile not found")
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("profile is not a directory")
+	}
+	return os.RemoveAll(root)
 }
 
 type Store struct {
