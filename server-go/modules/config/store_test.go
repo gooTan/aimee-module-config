@@ -64,6 +64,56 @@ func TestLegacyNestedSynthesisKeysProjectToCallerContract(t *testing.T) {
 	}
 }
 
+func TestServerAPINestedDocumentProjectsPublicAccessorContract(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	document := "aimee:\n  api:\n    http_port: 8740\n    tls_port: 8743\n    mtls: optional\n    mtls_client_ca: /run/aimee/client-ca.pem\n    bearer_token: must-not-leak\n    bearer_tokens_extra: [also-secret]\n    rate_limit_per_min: 17\n    max_event_streams: 23\n    cli_session_forwarding: false\n    remote_writes: data\n    client_transport: http\n"
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"server_api_http_port": 8740, "server_api_tls_port": 8743,
+		"server_api_mtls": 1, "server_api_mtls_client_ca": "/run/aimee/client-ca.pem",
+		"server_api_rate_limit_per_min": 17, "server_api_max_event_streams": 23,
+		"server_api_cli_session_forwarding": false, "server_api_remote_writes": 1,
+		"server_api_client_transport": "http",
+	}
+	for key, expected := range want {
+		if got := values[key]; got != expected {
+			t.Errorf("%s=%#v, want %#v", key, got, expected)
+		}
+	}
+	for _, key := range []string{"aimee_api_bearer_token", "aimee_api_bearer_tokens_extra", "server_api_bearer_token", "server_api_bearer_tokens_extra"} {
+		if _, present := values[key]; present {
+			t.Errorf("credential %q leaked in snapshot", key)
+		}
+	}
+}
+
+func TestServerAPIDeploymentEnvironmentOverridesDocument(t *testing.T) {
+	t.Setenv("AIMEE_API_MTLS", "required")
+	t.Setenv("AIMEE_API_REMOTE_WRITES", "full")
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	if err := os.WriteFile(path, []byte("aimee:\n  api:\n    mtls: optional\n    remote_writes: off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := NewStore(path)
+	values, _, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["server_api_mtls"] != 2 || values["server_api_remote_writes"] != 2 {
+		t.Fatalf("deployment overrides not projected: mtls=%v remote_writes=%v", values["server_api_mtls"], values["server_api_remote_writes"])
+	}
+}
+
 func TestStructuredRegistriesProjectCountsAndAlignedWorkspaceFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
 	document := "workspaces:\n  - /one\n  - path: /two\n    provider: git\n    remote: origin\n    head: main\ntrigger_rules:\n  - source: cron\nlsp_servers:\n  - name: clangd\nmemory:\n  dispositions:\n    skepticism: 0.8\n    literalism: 0.5\n"

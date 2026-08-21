@@ -141,7 +141,7 @@ var secretKeys = map[string]struct{}{
 	"telemetry_metrics_token": {}, "kb_client_bearer_token": {},
 	"server_api_bearer_token": {}, "trigger_auth_token": {},
 	"kb_curator_provider_api_key": {}, "embedder_api_key": {},
-	"synthesis_api_key": {},
+	"synthesis_api_key": {}, "server_api_bearer_tokens_extra": {},
 }
 
 // YAML keeps its operator-facing section names. Native and Go callers keep the
@@ -169,7 +169,14 @@ var lookupAliases = map[string]string{
 	"aimee_api_http_port":                           "server_api_http_port",
 	"aimee_api_tls_port":                            "server_api_tls_port",
 	"aimee_api_mtls":                                "server_api_mtls",
+	"aimee_api_mtls_client_ca":                      "server_api_mtls_client_ca",
+	"aimee_api_bearer_token":                        "server_api_bearer_token",
+	"aimee_api_bearer_tokens_extra":                 "server_api_bearer_tokens_extra",
 	"aimee_api_rate_limit_per_min":                  "server_api_rate_limit_per_min",
+	"aimee_api_max_event_streams":                   "server_api_max_event_streams",
+	"aimee_api_cli_session_forwarding":              "server_api_cli_session_forwarding",
+	"aimee_api_remote_writes":                       "server_api_remote_writes",
+	"aimee_api_client_transport":                    "server_api_client_transport",
 }
 
 func publicKey(key string) bool {
@@ -393,9 +400,10 @@ func (s *Store) effectiveValuesLocked(root *yaml.Node) map[string]any {
 			normalized = alias
 		}
 		if publicKey(normalized) {
-			out[normalized] = value
+			out[normalized] = callerContractValue(normalized, value)
 		}
 	}
+	applyEnvironmentOverrides(out)
 	if value, ok := out["db1_path"].(string); !ok || value == "" {
 		out["db1_path"] = filepath.Join(filepath.Dir(s.path), "aimee.db")
 	}
@@ -412,6 +420,63 @@ func (s *Store) effectiveValuesLocked(root *yaml.Node) map[string]any {
 	}
 	projectLegacyStructures(out)
 	return out
+}
+
+// callerContractValue retains the numeric enum contract exposed by the public
+// accessors while YAML keeps its operator-facing strings. These conversions
+// used to live in the native parser; moving the parser means they belong here.
+func callerContractValue(key string, value any) any {
+	text, isString := value.(string)
+	if !isString {
+		return value
+	}
+	switch key {
+	case "server_api_mtls":
+		switch text {
+		case "required":
+			return 2
+		case "optional":
+			return 1
+		default:
+			return 0
+		}
+	case "server_api_remote_writes":
+		switch text {
+		case "full":
+			return 2
+		case "data":
+			return 1
+		default:
+			return 0
+		}
+	}
+	return value
+}
+
+// These two variables are deployment truth in the established configuration
+// contract. The config module receives the same container environment as its
+// daemon and projects the overrides into the event-bus snapshot.
+func applyEnvironmentOverrides(out map[string]any) {
+	if value, present := os.LookupEnv("AIMEE_API_MTLS"); present && value != "" {
+		switch value {
+		case "required":
+			out["server_api_mtls"] = 2
+		case "optional":
+			out["server_api_mtls"] = 1
+		case "off":
+			out["server_api_mtls"] = 0
+		}
+	}
+	if value, present := os.LookupEnv("AIMEE_API_REMOTE_WRITES"); present && value != "" {
+		switch value {
+		case "full":
+			out["server_api_remote_writes"] = 2
+		case "data":
+			out["server_api_remote_writes"] = 1
+		case "off":
+			out["server_api_remote_writes"] = 0
+		}
+	}
 }
 
 func projectLegacyStructures(out map[string]any) {
