@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -32,9 +33,32 @@ func printDefaultValue(key string, output io.Writer) error {
 	return err
 }
 
+func printDefaultSnapshot(output io.Writer) error {
+	path, err := handler.DefaultPath()
+	if err != nil {
+		return err
+	}
+	store, err := handler.NewStore(path)
+	if err != nil {
+		return err
+	}
+	values, version, err := store.Snapshot()
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(map[string]any{"values": values, "version": version})
+}
+
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--get" {
 		if err := printDefaultValue(os.Args[2], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "aimee-module-config: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "--snapshot" {
+		if err := printDefaultSnapshot(os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "aimee-module-config: %v\n", err)
 			os.Exit(1)
 		}
@@ -46,7 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s DAEMON_MODULE_BUS_SOCKET | --get PUBLIC_STRING_KEY\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s DAEMON_MODULE_BUS_SOCKET | --get PUBLIC_STRING_KEY | --snapshot\n", os.Args[0])
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

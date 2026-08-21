@@ -15,6 +15,8 @@ Before a daemon bus exists, container bootstrap code may invoke
 `aimee-module-config --get PUBLIC_STRING_KEY`. This deliberately narrow mode is
 implemented by the same Go store, refuses secrets and non-string values, and
 prevents bootstrap scripts from becoming a second YAML parser.
+The `--snapshot` form exposes the same secret-filtered document for native
+contract-test fixtures; production callers use the event bus.
 
 The daemon admits the process only when its installed absolute executable path,
 UID, principal class, principal reference, and event-kind grants match the

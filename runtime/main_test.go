@@ -37,3 +37,21 @@ func TestPrintDefaultValueRejectsSecretsAndNonStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintDefaultSnapshotUsesSameFilteredStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	if err := os.WriteFile(path, []byte("provider: codex\nkb_api_bearer_token: forbidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AIMEE_CONFIG_PATH", path)
+	var output bytes.Buffer
+	if err := printDefaultSnapshot(&output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"provider":"codex"`) {
+		t.Fatalf("snapshot missing public value: %s", output.String())
+	}
+	if strings.Contains(output.String(), "forbidden") || strings.Contains(output.String(), "kb_api_bearer_token") {
+		t.Fatalf("snapshot leaked secret: %s", output.String())
+	}
+}
