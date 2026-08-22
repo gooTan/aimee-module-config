@@ -625,3 +625,45 @@ func TestMemoryRecallLaneDefaultsAndYAMLOverrides(t *testing.T) {
 		"memory_recall_lanes_floor_fact":    0,
 	})
 }
+
+func TestMalformedReloadKeepsLastGoodSnapshotAndRejectsMutations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	if err := os.WriteFile(path, []byte("feature_auto_promote: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.Value("feature_auto_promote")
+	if err != nil || value != true {
+		t.Fatalf("seed snapshot: value=%#v err=%v", value, err)
+	}
+
+	malformed := []byte("invalid: [unterminated\n")
+	if err := os.WriteFile(path, malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, err = store.Value("feature_auto_promote")
+	if err != nil || value != true {
+		t.Fatalf("last-good snapshot: value=%#v err=%v", value, err)
+	}
+	if err := store.Set("feature_auto_promote", false); err == nil {
+		t.Fatal("mutation unexpectedly overwrote malformed configuration")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != string(malformed) {
+		t.Fatalf("malformed file changed: %q", content)
+	}
+
+	if err := os.WriteFile(path, []byte("feature_auto_promote: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, err = store.Value("feature_auto_promote")
+	if err != nil || value != false {
+		t.Fatalf("recovered snapshot: value=%#v err=%v", value, err)
+	}
+}

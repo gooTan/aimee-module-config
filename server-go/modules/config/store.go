@@ -137,8 +137,9 @@ func (s *Store) ProfileDelete(name string) error {
 }
 
 type Store struct {
-	path string
-	mu   sync.Mutex
+	path     string
+	mu       sync.Mutex
+	lastGood *yaml.Node
 }
 
 // defaultsJSON is generated once from the last native configuration release's
@@ -760,7 +761,7 @@ func (s *Store) SetVersioned(key string, value any, previousVersion string) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -815,7 +816,7 @@ func (s *Store) SetTypedFacts(change TypedFactsMutation) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -855,7 +856,7 @@ func (s *Store) SetAPIHTTPListener(change APIHTTPListenerMutation) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -875,7 +876,7 @@ func (s *Store) SetModelConcurrency(change ModelConcurrencyMutation) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -916,7 +917,7 @@ func (s *Store) RemoveModelConcurrency(model string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -1002,7 +1003,7 @@ func (s *Store) WorkspaceAdd(change WorkspaceMutation) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -1096,7 +1097,7 @@ func (s *Store) WorkspaceRemove(workspacePath string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -1130,7 +1131,7 @@ func (s *Store) ApplyRoundtablePreset(p RoundtablePreset) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -1165,7 +1166,7 @@ func (s *Store) ApplyRoundtablePreset(p RoundtablePreset) error {
 func (s *Store) PersistDefaults() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root, err := s.read()
+	root, err := s.readStrict()
 	if err != nil {
 		return err
 	}
@@ -1214,7 +1215,11 @@ func (s *Store) writeLocked(root *yaml.Node) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, s.path)
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		return err
+	}
+	s.lastGood = cloneYAMLNode(root)
+	return nil
 }
 
 func (s *Store) Version(key string) (string, error) {
@@ -1437,10 +1442,35 @@ func number(value any) (int64, bool) {
 	return 0, false
 }
 
+func cloneYAMLNode(node *yaml.Node) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+	clone := *node
+	clone.Content = make([]*yaml.Node, len(node.Content))
+	for i, child := range node.Content {
+		clone.Content[i] = cloneYAMLNode(child)
+	}
+	return &clone
+}
+
+// read serves the last fully parsed snapshot when an out-of-band edit is
+// malformed. This preserves the live configuration contract: a broken reload
+// is rejected without replacing the values already in use. Mutations use
+// readStrict so they can never overwrite or silently repair an invalid file.
 func (s *Store) read() (*yaml.Node, error) {
+	root, err := s.readStrict()
+	if err != nil && s.lastGood != nil {
+		return cloneYAMLNode(s.lastGood), nil
+	}
+	return root, err
+}
+
+func (s *Store) readStrict() (*yaml.Node, error) {
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	content, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.lastGood = cloneYAMLNode(root)
 		return root, nil
 	}
 	if err != nil {
@@ -1451,12 +1481,15 @@ func (s *Store) read() (*yaml.Node, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if len(document.Content) == 0 {
+		s.lastGood = cloneYAMLNode(root)
 		return root, nil
 	}
 	if document.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("config root must be a mapping")
 	}
-	return document.Content[0], nil
+	root = document.Content[0]
+	s.lastGood = cloneYAMLNode(root)
+	return root, nil
 }
 
 func safePart(part string) bool {
