@@ -819,18 +819,30 @@ func (s *Store) SetTypedFacts(change TypedFactsMutation) error {
 	if err != nil {
 		return err
 	}
-	updates := map[string]any{}
+	kb := mappingChild(root, "kb", true)
+	if kb == nil || kb.Kind != yaml.MappingNode {
+		return errors.New("config path \"kb\" conflicts with a non-mapping value")
+	}
+	typedFacts := mappingChild(kb, "typed_facts", true)
+	if typedFacts == nil || typedFacts.Kind != yaml.MappingNode {
+		return errors.New("config path \"kb.typed_facts\" conflicts with a non-mapping value")
+	}
 	if change.Enabled != nil {
-		updates["typed_facts_enabled"] = *change.Enabled
+		if err := setEncoded(typedFacts, "enabled", *change.Enabled); err != nil {
+			return err
+		}
+		// The nested KB setting is canonical. Retire the legacy root alias once
+		// this grouped operation takes ownership so parse order cannot make the
+		// persisted document ambiguous.
+		deleteMappingChild(root, "typed_facts_enabled")
 	}
 	if change.AutoPromote != nil {
-		updates["kb_typed_facts_auto_promote_enabled"] = *change.AutoPromote
+		if err := setEncoded(typedFacts, "auto_promote", *change.AutoPromote); err != nil {
+			return err
+		}
 	}
 	if change.PromoteThreshold != nil {
-		updates["kb_typed_facts_promote_threshold"] = *change.PromoteThreshold
-	}
-	for key, value := range updates {
-		if err := setEncoded(root, key, value); err != nil {
+		if err := setEncoded(typedFacts, "promote_threshold", *change.PromoteThreshold); err != nil {
 			return err
 		}
 	}
@@ -1481,6 +1493,15 @@ func setMappingChild(node *yaml.Node, key string, value *yaml.Node) {
 		}
 	}
 	node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+}
+
+func deleteMappingChild(node *yaml.Node, key string) {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			node.Content = append(node.Content[:i], node.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 func flatten(node *yaml.Node, prefix string, out map[string]any) {

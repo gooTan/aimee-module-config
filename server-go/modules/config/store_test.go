@@ -390,6 +390,9 @@ func TestSnapshotVersionAndDynamicDB1Path(t *testing.T) {
 
 func TestAtomicMutationsRemainConsistentUnderConcurrency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aimee.yaml")
+	if err := os.WriteFile(path, []byte("typed_facts_enabled: false\nkeep-me: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	store, _ := NewStore(path)
 	enabled, promote := true, false
 	threshold := 7
@@ -401,6 +404,25 @@ func TestAtomicMutationsRemainConsistentUnderConcurrency(t *testing.T) {
 	if values["typed_facts_enabled"] != true || values["kb_typed_facts_auto_promote_enabled"] != false ||
 		values["kb_typed_facts_promote_threshold"] != 7 {
 		t.Fatalf("typed-fact mutation was not atomic: %#v", values)
+	}
+	document, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(document)
+	if !strings.Contains(text, "kb:\n") || !strings.Contains(text, "  typed_facts:\n") ||
+		!strings.Contains(text, "    promote_threshold: 7") || strings.Contains(text, "typed_facts_enabled:") ||
+		!strings.Contains(text, "keep-me: true") {
+		t.Fatalf("typed-fact document is not canonical:\n%s", text)
+	}
+	promote = true
+	if err := store.SetTypedFacts(TypedFactsMutation{AutoPromote: &promote}); err != nil {
+		t.Fatal(err)
+	}
+	values, _, _ = store.Snapshot()
+	if values["typed_facts_enabled"] != true || values["kb_typed_facts_auto_promote_enabled"] != true ||
+		values["kb_typed_facts_promote_threshold"] != 7 {
+		t.Fatalf("partial typed-fact mutation did not preserve siblings: %#v", values)
 	}
 
 	var group sync.WaitGroup
